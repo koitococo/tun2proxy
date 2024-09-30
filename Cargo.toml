@@ -32,7 +32,8 @@ socks5-impl = { version = "0.5" }
 thiserror = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
-tproxy-config = { version = "5", features = ["log"] }
+# tproxy-config = { version = "5", features = ["log"] }
+tproxy-config = { path = "../tproxy-config", features = ["log"], git = "https://github.com/koitococo/tproxy-config.git"}
 trust-dns-proto = "0.23"
 tun2 = { version = "2", features = ["async"] }
 udp-stream = { version = "0.0.12", default-features = false }

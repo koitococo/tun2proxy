@@ -91,8 +91,12 @@ async fn namespace_proxy_main(
     );
     log::info!("");
     if let Some(pidfile) = _args.unshare_pidfile.as_ref() {
+        if std::fs::exists(pidfile)? && std::fs::exists(format!("/proc/{}", std::fs::read_to_string(pidfile)?).as_str())? {
+            log::error!("The pidfile already exists and the process is running");
+            return Err(tun2proxy::Error::String("The pidfile already exists and the process is running".to_string()))
+        }
         log::info!("Writing unshare pid to {}", pidfile);
-        std::fs::write(pidfile, unshare_pid.to_string()).ok();
+        std::fs::write(pidfile, unshare_pid.to_string())?;
     }
     tokio::spawn(async move { tun2proxy::socket_transfer::process_socket_requests(&socket).await });
 
