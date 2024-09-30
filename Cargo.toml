@@ -1,14 +1,14 @@
 [package]
 name = "tun2proxy"
-version = "0.2.23"
+version = "0.5.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/blechschmidt/tun2proxy"
-homepage = "https://github.com/blechschmidt/tun2proxy"
+repository = "https://github.com/tun2proxy/tun2proxy"
+homepage = "https://github.com/tun2proxy/tun2proxy"
 authors = ["B. Blechschmidt", "ssrlive"]
 description = "Tunnel interface to proxy"
 readme = "README.md"
-rust-version = "1.77"
+rust-version = "1.80"
 
 [lib]
 crate-type = ["staticlib", "cdylib", "lib"]
@@ -23,19 +23,19 @@ digest_auth = "0.3"
 dotenvy = "0.15"
 env_logger = "0.11"
 hashlink = "0.9"
+hickory-proto = "0.24"
 httparse = "1"
-ipstack = { version = "0.0.10" }
-lazy_static = "1"
+ipstack = { version = "0.1" }
 log = { version = "0.4", features = ["std"] }
+mimalloc = { version = "0.1", default-features = false, optional = true }
 percent-encoding = "2"
 socks5-impl = { version = "0.5" }
 thiserror = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
-# tproxy-config = { version = "5", features = ["log"] }
-tproxy-config = { path = "../tproxy-config", features = ["log"], git = "https://github.com/koitococo/tproxy-config.git"}
+tproxy-config = { features = ["log"], git = "https://github.com/koitococo/tproxy-config.git"}
 trust-dns-proto = "0.23"
-tun2 = { version = "2", features = ["async"] }
+tun2 = { version = "3", features = ["async"] }
 udp-stream = { version = "0.0.12", default-features = false }
 unicase = "2"
 url = "2"
@@ -43,7 +43,7 @@ url = "2"
 [target.'cfg(target_os="linux")'.dependencies]
 serde = { version = "1", features = ["derive"] }
 bincode = "1"
-nix = { version = "0", default-features = false, features = [
+nix = { version = "0.29", default-features = false, features = [
     "fs",
     "socket",
     "uio",
@@ -53,11 +53,17 @@ nix = { version = "0", default-features = false, features = [
 android_logger = "0.14"
 jni = { version = "0.21", default-features = false }
 
+[target.'cfg(unix)'.dependencies]
+daemonize = "0.5"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-service = "0.7"
+
 [build-dependencies]
 serde_json = "1"
 
 [[bin]]
-name = "tun2proxy"
+name = "tun2proxy-bin"
 path = "src/bin/main.rs"
 
 [profile.release]

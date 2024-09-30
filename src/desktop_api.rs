@@ -86,9 +86,17 @@ pub async fn desktop_run_async(args: Args, shutdown_token: tokio_util::sync::Can
     let mut tun_config = tun2::Configuration::default();
     tun_config.address(TUN_IPV4).netmask(TUN_NETMASK).mtu(MTU).up();
     tun_config.destination(TUN_GATEWAY);
-    if let Some(tun_fd) = args.tun_fd {
-        tun_config.raw_fd(tun_fd);
+    #[cfg(unix)]
+    if let Some(fd) = args.tun_fd {
+        tun_config.raw_fd(fd);
+        if let Some(v) = args.close_fd_on_drop {
+            tun_config.close_fd_on_drop(v);
+        };
     } else if let Some(ref tun) = args.tun {
+        tun_config.tun_name(tun);
+    }
+    #[cfg(windows)]
+    if let Some(ref tun) = args.tun {
         tun_config.tun_name(tun);
     }
 
@@ -116,12 +124,12 @@ pub async fn desktop_run_async(args: Args, shutdown_token: tokio_util::sync::Can
 
     let device = tun2::create_as_async(&tun_config)?;
 
-    if let Ok(tun_name) = device.as_ref().tun_name() {
+    if let Ok(tun_name) = device.tun_name() {
         tproxy_args = tproxy_args.tun_name(&tun_name);
     }
 
     // TproxyState implements the Drop trait to restore network configuration,
-    // so we we need to assign it to a variable, even if it is not used.
+    // so we need to assign it to a variable, even if it is not used.
     let mut _restore: Option<tproxy_config::TproxyState> = None;
 
     #[cfg(target_os = "linux")]

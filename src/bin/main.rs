@@ -5,8 +5,26 @@ async fn main() -> Result<(), BoxError> {
     dotenvy::dotenv().ok();
     let args = Args::parse_args();
 
-    // let default = format!("{}={:?},trust_dns_proto=warn", module_path!(), args.verbosity);
-    let default = format!("{:?},trust_dns_proto=warn", args.verbosity);
+    #[cfg(unix)]
+    if args.daemonize {
+        let stdout = std::fs::File::create("/tmp/tun2proxy.out")?;
+        let stderr = std::fs::File::create("/tmp/tun2proxy.err")?;
+        let daemonize = daemonize::Daemonize::new()
+            .working_directory("/tmp")
+            .umask(0o777)
+            .stdout(stdout)
+            .stderr(stderr)
+            .privileged_action(|| "Executed before drop privileges");
+        let _ = daemonize.start()?;
+    }
+
+    #[cfg(target_os = "windows")]
+    if args.daemonize {
+        tun2proxy::win_svc::start_service()?;
+        return Ok(());
+    }
+
+    let default = format!("{:?},hickory_proto=warn", args.verbosity);
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default)).init();
 
     let shutdown_token = tokio_util::sync::CancellationToken::new();
@@ -82,7 +100,7 @@ async fn namespace_proxy_main(
     log::info!("The tun proxy is running in unprivileged mode. See `namespaces(7)`.");
     log::info!("");
     log::info!("If you need to run a process that relies on root-like capabilities (e.g. `openvpn`)");
-    log::info!("Use `tun2proxy --unshare --setup [...] -- openvpn --config [...]`");
+    log::info!("Use `tun2proxy-bin --unshare --setup [...] -- openvpn --config [...]`");
     log::info!("");
     log::info!("To run a new process in the created namespace (e.g. a flatpak app)");
     log::info!(

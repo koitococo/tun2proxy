@@ -6,6 +6,7 @@ use tproxy_config::IpCidr;
 use std::ffi::OsString;
 
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::str::FromStr;
 
 #[derive(Debug, Clone, clap::Parser)]
 #[command(author, version, about = "Tunnel interface to proxy.", long_about = None)]
@@ -19,12 +20,21 @@ pub struct Args {
 
     /// Name of the tun interface, such as tun0, utun4, etc.
     /// If this option is not provided, the OS will generate a random one.
-    #[arg(short, long, value_name = "name", conflicts_with = "tun_fd", value_parser = validate_tun)]
+    #[arg(short, long, value_name = "name", value_parser = validate_tun)]
+    #[cfg_attr(unix, arg(conflicts_with = "tun_fd"))]
     pub tun: Option<String>,
 
     /// File descriptor of the tun interface
+    #[cfg(unix)]
     #[arg(long, value_name = "fd", conflicts_with = "tun")]
     pub tun_fd: Option<i32>,
+
+    /// Set whether to close the received raw file descriptor on drop or not.
+    /// This setting is passed to the tun2 crate.
+    /// See [tun2::Configuration::close_fd_on_drop].
+    #[cfg(unix)]
+    #[arg(long, value_name = "true or false", conflicts_with = "tun")]
+    pub close_fd_on_drop: Option<bool>,
 
     /// Create a tun interface in a newly created unprivileged namespace
     /// while maintaining proxy connectivity via the global network namespace.
@@ -68,6 +78,10 @@ pub struct Args {
     #[arg(long, value_name = "IP", default_value = "8.8.8.8")]
     pub dns_addr: IpAddr,
 
+    /// IP address pool to be used by virtual DNS in CIDR notation.
+    #[arg(long, value_name = "CIDR", default_value = "198.18.0.0/15")]
+    pub virtual_dns_pool: IpCidr,
+
     /// IPs used in routing setup which should bypass the tunnel,
     /// in the form of IP or IP/CIDR. Multiple IPs can be specified,
     /// e.g. --bypass 3.4.5.0/24 --bypass 5.6.7.8
@@ -85,6 +99,10 @@ pub struct Args {
     /// Verbosity level
     #[arg(short, long, value_name = "level", value_enum, default_value = "info")]
     pub verbosity: ArgVerbosity,
+
+    /// Daemonize for unix family or run as Windows service
+    #[arg(long)]
+    pub daemonize: bool,
 }
 
 fn validate_tun(p: &str) -> Result<String> {
@@ -104,7 +122,10 @@ impl Default for Args {
         Args {
             proxy: ArgProxy::default(),
             tun: None,
+            #[cfg(unix)]
             tun_fd: None,
+            #[cfg(unix)]
+            close_fd_on_drop: None,
             #[cfg(target_os = "linux")]
             unshare: false,
             #[cfg(target_os = "linux")]
@@ -121,6 +142,8 @@ impl Default for Args {
             tcp_timeout: 600,
             udp_timeout: 10,
             verbosity: ArgVerbosity::Info,
+            virtual_dns_pool: IpCidr::from_str("198.18.0.0/15").unwrap(),
+            daemonize: false,
         }
     }
 }
@@ -148,8 +171,15 @@ impl Args {
         self
     }
 
+    #[cfg(unix)]
     pub fn tun_fd(&mut self, tun_fd: Option<i32>) -> &mut Self {
         self.tun_fd = tun_fd;
+        self
+    }
+
+    #[cfg(unix)]
+    pub fn close_fd_on_drop(&mut self, close_fd_on_drop: bool) -> &mut Self {
+        self.close_fd_on_drop = Some(close_fd_on_drop);
         self
     }
 

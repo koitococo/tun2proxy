@@ -30,6 +30,10 @@ pub use {
     traffic_status::{tun2proxy_set_traffic_status_callback, TrafficStatus},
 };
 
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 pub use desktop_api::desktop_run_async;
 
@@ -56,6 +60,8 @@ pub mod socket_transfer;
 mod socks;
 mod traffic_status;
 mod virtual_dns;
+#[doc(hidden)]
+pub mod win_svc;
 
 const DNS_PORT: u16 = 53;
 
@@ -157,7 +163,7 @@ where
     let dns_addr = args.dns_addr;
     let ipv6_enabled = args.ipv6_enabled;
     let virtual_dns = if args.dns == ArgDns::Virtual {
-        Some(Arc::new(Mutex::new(VirtualDns::new())))
+        Some(Arc::new(Mutex::new(VirtualDns::new(args.virtual_dns_pool))))
     } else {
         None
     };
@@ -323,7 +329,7 @@ where
             }
             IpStackStream::UnknownTransport(u) => {
                 let len = u.payload().len();
-                log::info!("#0 unhandled transport - Ip Protocol {:?}, length {}", u.ip_protocol(), len);
+                log::info!("#0 unhandled transport - Ip Protocol 0x{:02X}, length {}", u.ip_protocol(), len);
                 continue;
             }
             IpStackStream::UnknownNetwork(pkt) => {
