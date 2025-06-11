@@ -1,70 +1,82 @@
 [package]
 name = "tun2proxy"
-version = "0.5.0"
-edition = "2021"
+version = "0.7.10"
+edition = "2024"
 license = "MIT"
 repository = "https://github.com/tun2proxy/tun2proxy"
 homepage = "https://github.com/tun2proxy/tun2proxy"
 authors = ["B. Blechschmidt", "ssrlive"]
 description = "Tunnel interface to proxy"
 readme = "README.md"
-rust-version = "1.80"
+rust-version = "1.85"
 
 [lib]
 crate-type = ["staticlib", "cdylib", "lib"]
 
+[[bin]]
+name = "tun2proxy-bin"
+path = "src/bin/main.rs"
+
+[[bin]]
+name = "udpgw-server"
+path = "src/bin/udpgw_server.rs"
+required-features = ["udpgw"]
+
+[features]
+default = ["udpgw"]
+udpgw = []
+
 [dependencies]
 async-trait = "0.1"
-base64 = { version = "0.22" }
+base64easy = "0.1"
 chrono = "0.4"
 clap = { version = "4", features = ["derive", "wrap_help", "color"] }
 ctrlc2 = { version = "3", features = ["tokio", "termination"] }
 digest_auth = "0.3"
 dotenvy = "0.15"
 env_logger = "0.11"
-hashlink = "0.9"
-hickory-proto = "0.24"
+hashlink = "0.10"
+hickory-proto = "0.25"
 httparse = "1"
-ipstack = { version = "0.1" }
+ipstack = { version = "0.4" }
 log = { version = "0.4", features = ["std"] }
 mimalloc = { version = "0.1", default-features = false, optional = true }
 percent-encoding = "2"
-socks5-impl = { version = "0.5" }
-thiserror = "1"
+shlex = "1.3.0"
+socks5-impl = { version = "0.7", default-features = false, features = [
+    "tokio",
+] }
+thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
-tproxy-config = { features = ["log"], git = "https://github.com/koitococo/tproxy-config.git"}
-trust-dns-proto = "0.23"
-tun2 = { version = "3", features = ["async"] }
+tproxy-config = { features = ["log"], git = "https://github.com/koitococo/tproxy-config.git", rev = "78e0b86"}
+tun = { version = "0.8", features = ["async"] }
 udp-stream = { version = "0.0.12", default-features = false }
 unicase = "2"
 url = "2"
 
+[target.'cfg(target_os="android")'.dependencies]
+android_logger = "0.15"
+jni = { version = "0.21", default-features = false }
+
 [target.'cfg(target_os="linux")'.dependencies]
+bincode = "2"
 serde = { version = "1", features = ["derive"] }
-bincode = "1"
-nix = { version = "0.29", default-features = false, features = [
+
+[target.'cfg(target_os="windows")'.dependencies]
+windows-service = "0.8"
+
+[target.'cfg(unix)'.dependencies]
+daemonize = "0.5"
+nix = { version = "0.30", default-features = false, features = [
     "fs",
     "socket",
     "uio",
 ] }
 
-[target.'cfg(target_os="android")'.dependencies]
-android_logger = "0.14"
-jni = { version = "0.21", default-features = false }
-
-[target.'cfg(unix)'.dependencies]
-daemonize = "0.5"
-
-[target.'cfg(target_os = "windows")'.dependencies]
-windows-service = "0.7"
-
 [build-dependencies]
+chrono = "0.4"
 serde_json = "1"
 
-[[bin]]
-name = "tun2proxy-bin"
-path = "src/bin/main.rs"
-
-[profile.release]
-strip = "symbols"
+# [profile.release]
+# strip = "symbols"

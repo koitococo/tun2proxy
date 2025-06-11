@@ -4,11 +4,10 @@ use crate::{
     proxy_handler::{ProxyHandler, ProxyHandlerManager},
     session_info::{IpProtocol, SessionInfo},
 };
-use base64::Engine;
 use httparse::Response;
 use socks5_impl::protocol::UserKey;
 use std::{
-    collections::{hash_map::RandomState, HashMap, VecDeque},
+    collections::{HashMap, VecDeque, hash_map::RandomState},
     iter::FromIterator,
     net::SocketAddr,
     str,
@@ -141,8 +140,7 @@ impl HttpConnection {
                     .extend(format!("{}: {}\r\n", PROXY_AUTHORIZATION, response.to_header_string()).as_bytes());
             }
             AuthenticationScheme::Basic => {
-                let cred = format!("{}:{}", credentials.username, credentials.password);
-                let auth_b64 = base64::engine::general_purpose::STANDARD.encode(cred);
+                let auth_b64 = base64easy::encode(credentials.to_string(), base64easy::EngineKind::Standard);
                 self.server_outbuf
                     .extend(format!("{}: Basic {}\r\n", PROXY_AUTHORIZATION, auth_b64).as_bytes());
             }
@@ -252,7 +250,7 @@ impl HttpConnection {
                 }
 
                 // The HTTP/1.1 expected to be keep alive waiting for the next frame so, we must
-                // compute the lenght of the response in order to detect the next frame (response)
+                // compute the length of the response in order to detect the next frame (response)
                 // [RFC-9112](https://datatracker.ietf.org/doc/html/rfc9112#body.content-length)
 
                 // Transfer-Encoding isn't supported yet

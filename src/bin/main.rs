@@ -1,7 +1,6 @@
-use tun2proxy::{Args, BoxError};
+use tun2proxy::{ArgVerbosity, Args, BoxError};
 
-#[tokio::main]
-async fn main() -> Result<(), BoxError> {
+fn main() -> Result<(), BoxError> {
     dotenvy::dotenv().ok();
     let args = Args::parse_args();
 
@@ -24,11 +23,21 @@ async fn main() -> Result<(), BoxError> {
         return Ok(());
     }
 
-    let default = format!("{:?},hickory_proto=warn", args.verbosity);
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    rt.block_on(main_async(args))
+}
+
+async fn main_async(args: Args) -> Result<(), BoxError> {
+    let ipstack = match args.verbosity {
+        ArgVerbosity::Trace => ArgVerbosity::Debug,
+        _ => args.verbosity,
+    };
+    let default = format!("{:?},hickory_proto=warn,ipstack={:?}", args.verbosity, ipstack);
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default)).init();
 
     let shutdown_token = tokio_util::sync::CancellationToken::new();
-    let join_handle = tokio::spawn({
+    let main_loop_handle = tokio::spawn({
+        let args = args.clone();
         let shutdown_token = shutdown_token.clone();
         async move {
             #[cfg(target_os = "linux")]
@@ -36,29 +45,43 @@ async fn main() -> Result<(), BoxError> {
                 if let Err(err) = namespace_proxy_main(args, shutdown_token).await {
                     log::error!("namespace proxy error: {}", err);
                 }
-                return;
+                return Ok(0);
             }
 
             unsafe extern "C" fn traffic_cb(status: *const tun2proxy::TrafficStatus, _: *mut std::ffi::c_void) {
-                let status = &*status;
+                let status = unsafe { &*status };
                 log::debug!("Traffic: ▲ {} : ▼ {}", status.tx, status.rx);
             }
             unsafe { tun2proxy::tun2proxy_set_traffic_status_callback(1, Some(traffic_cb), std::ptr::null_mut()) };
 
-            if let Err(err) = tun2proxy::desktop_run_async(args, shutdown_token).await {
-                log::error!("main loop error: {}", err);
+            let ret = tun2proxy::general_run_async(args, tun::DEFAULT_MTU, cfg!(target_os = "macos"), shutdown_token).await;
+            if let Err(err) = &ret {
+                log::error!("main loop error: {err}");
             }
+            ret
         }
     });
 
-    ctrlc2::set_async_handler(async move {
+    let ctrlc_fired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let ctrlc_fired_clone = ctrlc_fired.clone();
+    let ctrlc_handel = ctrlc2::set_async_handler(async move {
         log::info!("Ctrl-C received, exiting...");
+        ctrlc_fired_clone.store(true, std::sync::atomic::Ordering::SeqCst);
         shutdown_token.cancel();
     })
     .await;
 
-    if let Err(err) = join_handle.await {
-        log::error!("main_entry error {}", err);
+    let tasks = main_loop_handle.await??;
+
+    if ctrlc_fired.load(std::sync::atomic::Ordering::SeqCst) {
+        log::info!("Ctrl-C fired, waiting the handler to finish...");
+        ctrlc_handel.await.map_err(|err| err.to_string())?;
+    }
+
+    if args.exit_on_fatal_error && tasks >= args.max_sessions {
+        // Because `main_async` function perhaps stuck in `await` state, so we need to exit the process forcefully
+        log::info!("Internal fatal error, max sessions reached ({tasks}/{})", args.max_sessions);
+        std::process::exit(-1);
     }
 
     Ok(())
@@ -69,7 +92,7 @@ async fn namespace_proxy_main(
     _args: Args,
     _shutdown_token: tokio_util::sync::CancellationToken,
 ) -> Result<std::process::ExitStatus, tun2proxy::Error> {
-    use nix::fcntl::{open, OFlag};
+    use nix::fcntl::{OFlag, open};
     use nix::sys::stat::Mode;
     use std::os::fd::AsRawFd;
 
@@ -79,7 +102,7 @@ async fn namespace_proxy_main(
 
     let child = tokio::process::Command::new("unshare")
         .args("--user --map-current-user --net --mount --keep-caps --kill-child --fork".split(' '))
-        .arg(format!("/proc/self/fd/{}", fd))
+        .arg(format!("/proc/self/fd/{}", fd.as_raw_fd()))
         .arg("--socket-transfer-fd")
         .arg(remote_fd.as_raw_fd().to_string())
         .args(std::env::args().skip(1))

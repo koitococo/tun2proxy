@@ -6,7 +6,7 @@ pub enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     #[error("nix::errno::Errno {0:?}")]
     NixErrno(#[from] nix::errno::Errno),
 
@@ -23,10 +23,10 @@ pub enum Error {
     TryFromSlice(#[from] std::array::TryFromSliceError),
 
     #[error("IpStackError {0:?}")]
-    IpStack(#[from] ipstack::IpStackError),
+    IpStack(#[from] Box<ipstack::IpStackError>),
 
     #[error("DnsProtoError {0:?}")]
-    DnsProto(#[from] hickory_proto::error::ProtoError),
+    DnsProto(#[from] hickory_proto::ProtoError),
 
     #[error("httparse::Error {0:?}")]
     Httparse(#[from] httparse::Error),
@@ -43,10 +43,12 @@ pub enum Error {
 
     #[error("std::num::ParseIntError {0:?}")]
     IntParseError(#[from] std::num::ParseIntError),
+}
 
-    #[cfg(target_os = "linux")]
-    #[error("bincode::Error {0:?}")]
-    BincodeError(#[from] bincode::Error),
+impl From<ipstack::IpStackError> for Error {
+    fn from(err: ipstack::IpStackError) -> Self {
+        Self::IpStack(Box::new(err))
+    }
 }
 
 impl From<&str> for Error {
@@ -71,7 +73,7 @@ impl From<Error> for std::io::Error {
     fn from(err: Error) -> Self {
         match err {
             Error::Io(err) => err,
-            _ => std::io::Error::new(std::io::ErrorKind::Other, err),
+            _ => std::io::Error::other(err),
         }
     }
 }

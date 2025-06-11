@@ -12,18 +12,16 @@ jobs:
   proxy_tests:
     name: Proxy Tests
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'safe to test')
+    if: (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'safe to test')) && github.actor != 'dependabot[bot]' && github.actor != 'github-actions[bot]'
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - name: Populate .env
         env:
           DOTENV: ${{ secrets.DOTENV }}
-        run: echo "$DOTENV" > .env
+        run: |
+          echo "$DOTENV" > tests/.env
+          ln -s tests/.env
 
       - name: Set up Python
         uses: actions/setup-python@v2
@@ -40,7 +38,7 @@ jobs:
       
       - name: Build project
         run: cargo build --release
-      
+
       - name: Run tests
         run: |
           source venv/bin/activate

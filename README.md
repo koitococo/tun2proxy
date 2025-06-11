@@ -1,8 +1,10 @@
+[![tun2proxy](https://socialify.git.ci/tun2proxy/tun2proxy/image?description=1&language=1&name=1&stargazers=1&theme=Light)](https://github.com/tun2proxy/tun2proxy)
+
 # tun2proxy
 A tunnel interface for HTTP and SOCKS proxies on Linux, Android, macOS, iOS and Windows.
 
 [![Crates.io](https://img.shields.io/crates/v/tun2proxy.svg)](https://crates.io/crates/tun2proxy)
-![tun2proxy](https://docs.rs/tun2proxy/badge.svg)
+[![tun2proxy](https://docs.rs/tun2proxy/badge.svg)](https://docs.rs/tun2proxy)
 [![Documentation](https://img.shields.io/badge/docs-release-brightgreen.svg?style=flat)](https://docs.rs/tun2proxy)
 [![Download](https://img.shields.io/crates/d/tun2proxy.svg)](https://crates.io/crates/tun2proxy)
 [![License](https://img.shields.io/crates/l/tun2proxy.svg?style=flat)](https://github.com/tun2proxy/tun2proxy/blob/master/LICENSE)
@@ -18,6 +20,7 @@ A tunnel interface for HTTP and SOCKS proxies on Linux, Android, macOS, iOS and 
 - GFW evasion mechanism for certain use cases (see [issue #35](https://github.com/tun2proxy/tun2proxy/issues/35))
 - SOCKS5 UDP support
 - Native support for proxying DNS over TCP
+- UdpGW (UDP gateway) support for UDP over TCP, see the [wiki](https://github.com/tun2proxy/tun2proxy/wiki/UDP-gateway-feature) for more information
 
 ## Build
 Clone the repository and `cd` into the project folder. Then run the following:
@@ -129,36 +132,48 @@ Tunnel interface to proxy.
 Usage: tun2proxy-bin [OPTIONS] --proxy <URL> [ADMIN_COMMAND]...
 
 Arguments:
-  [ADMIN_COMMAND]...  Specify a command to run with root-like capabilities in the new namespace when using `--unshare`.
-                      This could be useful to start additional daemons, e.g. `openvpn` instance
+  [ADMIN_COMMAND]...  Specify a command to run with root-like capabilities in the new namespace when using `--unshare`. This could be
+                      useful to start additional daemons, e.g. `openvpn` instance
 
 Options:
-  -p, --proxy <URL>            Proxy URL in the form proto://[username[:password]@]host:port, where proto is one of
-                               socks4, socks5, http. For example: socks5://myname:password@127.0.0.1:1080
-  -t, --tun <name>             Name of the tun interface, such as tun0, utun4, etc. If this option is not provided, the
-                               OS will generate a random one
-      --tun-fd <fd>            File descriptor of the tun interface
-      --unshare                Create a tun interface in a newly created unprivileged namespace while maintaining proxy
-                               connectivity via the global network namespace
-  -6, --ipv6-enabled           IPv6 enabled
-  -s, --setup                  Routing and system setup, which decides whether to setup the routing and system
-                               configuration. This option is only available on Linux and requires root-like privileges.
-                               See `capabilities(7)`
-  -d, --dns <strategy>         DNS handling strategy [default: direct] [possible values: virtual, over-tcp, direct]
-      --dns-addr <IP>          DNS resolver address [default: 8.8.8.8]
-  -b, --bypass <IP/CIDR>       IPs used in routing setup which should bypass the tunnel, in the form of IP or IP/CIDR.
-                               Multiple IPs can be specified, e.g. --bypass 3.4.5.0/24 --bypass 5.6.7.8
-      --tcp-timeout <seconds>  TCP timeout in seconds [default: 600]
-      --udp-timeout <seconds>  UDP timeout in seconds [default: 10]
-  -v, --verbosity <level>      Verbosity level [default: info] [possible values: off, error, warn, info, debug, trace]
-  -h, --help                   Print help
-  -V, --version                Print version
+  -p, --proxy <URL>                        Proxy URL in the form proto://[username[:password]@]host:port, where proto is one of
+                                           socks4, socks5, http. Username and password are encoded in percent encoding. For example:
+                                           socks5://myname:pass%40word@127.0.0.1:1080
+  -t, --tun <name>                         Name of the tun interface, such as tun0, utun4, etc. If this option is not provided, the
+                                           OS will generate a random one
+      --tun-fd <fd>                        File descriptor of the tun interface
+      --close-fd-on-drop <true or false>   Set whether to close the received raw file descriptor on drop or not. This setting is
+                                           dependent on [tun_fd] [possible values: true, false]
+      --unshare                            Create a tun interface in a newly created unprivileged namespace while maintaining proxy
+                                           connectivity via the global network namespace
+      --unshare-pidfile <UNSHARE_PIDFILE>  Create a pidfile of `unshare` process when using `--unshare`
+  -6, --ipv6-enabled                       IPv6 enabled
+  -s, --setup                              Routing and system setup, which decides whether to setup the routing and system
+                                           configuration. This option requires root-like privileges on every platform.
+                                           It is very important on Linux, see `capabilities(7)`
+  -d, --dns <strategy>                     DNS handling strategy [default: direct] [possible values: virtual, over-tcp, direct]
+      --dns-addr <IP>                      DNS resolver address [default: 8.8.8.8]
+      --virtual-dns-pool <CIDR>            IP address pool to be used by virtual DNS in CIDR notation [default: 198.18.0.0/15]
+  -b, --bypass <IP/CIDR>                   IPs used in routing setup which should bypass the tunnel, in the form of IP or IP/CIDR.
+                                           Multiple IPs can be specified, e.g. --bypass 3.4.5.0/24 --bypass 5.6.7.8
+      --tcp-timeout <seconds>              TCP timeout in seconds [default: 600]
+      --udp-timeout <seconds>              UDP timeout in seconds [default: 10]
+  -v, --verbosity <level>                  Verbosity level [default: info] [possible values: off, error, warn, info, debug, trace]
+      --daemonize                          Daemonize for unix family or run as Windows service
+      --exit-on-fatal-error                Exit immediately when fatal error occurs, useful for running as a service
+      --max-sessions <number>              Maximum number of sessions to be handled concurrently [default: 200]
+      --udpgw-server <IP:PORT>             UDP gateway server address, forwards UDP packets via specified TCP server
+      --udpgw-connections <number>         Max connections for the UDP gateway, default value is 5
+      --udpgw-keepalive <seconds>          Keepalive interval in seconds for the UDP gateway, default value is 30
+  -h, --help                               Print help
+  -V, --version                            Print version
 ```
 Currently, tun2proxy supports HTTP, SOCKS4/SOCKS4a and SOCKS5. A proxy is supplied to the `--proxy` argument in the
 URL format. For example, an HTTP proxy at `1.2.3.4:3128` with a username of `john.doe` and a password of `secret` is
 supplied as `--proxy http://john.doe:secret@1.2.3.4:3128`. This works analogously to curl's `--proxy` argument.
 
-## Docker Support
+## Container Support
+### Docker
 Tun2proxy can serve as a proxy for other Docker containers. To make use of that feature, first build the image:
 
 ```bash
@@ -183,6 +198,36 @@ docker run -it \
 	--network "container:tun2proxy" \
 	ubuntu:latest
 ```
+### Docker Compose
+
+Write a `docker-compose.yaml` file with the following content:
+
+```yaml
+services:
+  tun2proxy:
+    volumes:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv6.conf.default.disable_ipv6=0
+    cap_add:
+      - NET_ADMIN
+    container_name: tun2proxy
+    image: ghcr.io/tun2proxy/tun2proxy:latest-ubuntu
+    command: --proxy proto://[username[:password]@]host:port
+  alpine:
+    stdin_open: true
+    tty: true
+    network_mode: container:tun2proxy
+    image: alpine:latest
+    command: apk add curl && curl ifconfig.icu && sleep 10
+```
+
+Then run the compose file
+
+```bash
+docker compose up -d tun2proxy
+docker compose up alpine
+```
 
 ## Configuration Tips
 ### DNS
@@ -204,3 +249,10 @@ asked to open connections to IPv6 destinations. In such a case, you can disable 
 either through `sysctl -w net.ipv6.conf.all.disable_ipv6=1` and `sysctl -w net.ipv6.conf.default.disable_ipv6=1`
 or through `ip -6 route del default`, which causes the `libc` resolver (and other software) to not issue DNS AAAA
 requests for IPv6 addresses.
+
+## Contributors ✨
+Thanks goes to these wonderful people:
+
+<a href="https://github.com/tun2proxy/tun2proxy/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=tun2proxy/tun2proxy" />
+</a>

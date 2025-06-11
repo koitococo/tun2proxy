@@ -1,10 +1,10 @@
 #![cfg(target_os = "linux")]
 
-use crate::{error, SocketDomain, SocketProtocol};
+use crate::{SocketDomain, SocketProtocol, error};
 use nix::{
     errno::Errno,
     fcntl::{self, FdFlag},
-    sys::socket::{cmsg_space, getsockopt, recvmsg, sendmsg, sockopt, ControlMessage, ControlMessageOwned, MsgFlags, SockType},
+    sys::socket::{ControlMessage, ControlMessageOwned, MsgFlags, SockType, cmsg_space, getsockopt, recvmsg, sendmsg, sockopt},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -16,31 +16,31 @@ use tokio::net::{TcpSocket, UdpSocket, UnixDatagram};
 
 const REQUEST_BUFFER_SIZE: usize = 64;
 
-#[derive(Hash, Copy, Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(bincode::Encode, bincode::Decode, Hash, Copy, Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
 struct Request {
     protocol: SocketProtocol,
     domain: SocketDomain,
     number: u32,
 }
 
-#[derive(Hash, Copy, Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(bincode::Encode, bincode::Decode, PartialEq, Debug, Hash, Copy, Clone, Eq, Serialize, Deserialize)]
 enum Response {
     Ok,
 }
 
 /// Reconstruct socket from raw `fd`
 pub fn reconstruct_socket(fd: RawFd) -> Result<OwnedFd> {
-    // Check if `fd` is valid
-    let fd_flags = fcntl::fcntl(fd, fcntl::F_GETFD)?;
-
     // `fd` is confirmed to be valid so it should be closed
     let socket = unsafe { OwnedFd::from_raw_fd(fd) };
+
+    // Check if `fd` is valid
+    let fd_flags = fcntl::fcntl(socket.as_fd(), fcntl::F_GETFD)?;
 
     // Insert CLOEXEC flag to the `fd` to prevent further propagation across `execve(2)` calls
     let mut fd_flags = FdFlag::from_bits(fd_flags).ok_or(ErrorKind::Unsupported)?;
     if !fd_flags.contains(FdFlag::FD_CLOEXEC) {
         fd_flags.insert(FdFlag::FD_CLOEXEC);
-        fcntl::fcntl(fd, fcntl::F_SETFD(fd_flags))?;
+        fcntl::fcntl(socket.as_fd(), fcntl::F_SETFD(fd_flags))?;
     }
 
     Ok(socket)
@@ -70,12 +70,12 @@ pub async fn create_transfer_socket_pair() -> std::io::Result<(UnixDatagram, Own
     let remote_fd: OwnedFd = remote.into_std().unwrap().into();
 
     // Get `remote_fd` flags
-    let fd_flags = fcntl::fcntl(remote_fd.as_raw_fd(), fcntl::F_GETFD)?;
+    let fd_flags = fcntl::fcntl(remote_fd.as_fd(), fcntl::F_GETFD)?;
 
     // Remove CLOEXEC flag from the `remote_fd` to allow propagating across `execve(2)`
     let mut fd_flags = FdFlag::from_bits(fd_flags).ok_or(ErrorKind::Unsupported)?;
     fd_flags.remove(FdFlag::FD_CLOEXEC);
-    fcntl::fcntl(remote_fd.as_raw_fd(), fcntl::F_SETFD(fd_flags))?;
+    fcntl::fcntl(remote_fd.as_fd(), fcntl::F_SETFD(fd_flags))?;
 
     Ok((local, remote_fd))
 }
@@ -135,14 +135,21 @@ where
     // Borrow socket as mut to prevent multiple simultaneous requests
     let socket = socket.deref_mut();
 
-    // Send request
-    let request = bincode::serialize(&Request {
-        protocol: T::domain(),
-        domain,
-        number,
-    })?;
+    let mut request = [0u8; 1000];
 
-    socket.send(&request[..]).await?;
+    // Send request
+    let size = bincode::encode_into_slice(
+        Request {
+            protocol: T::domain(),
+            domain,
+            number,
+        },
+        &mut request,
+        bincode::config::standard(),
+    )
+    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+
+    socket.send(&request[..size]).await?;
 
     // Receive response
     loop {
@@ -161,7 +168,9 @@ where
 
         // Parse response
         let response = &msg.iovs().next().unwrap()[..msg.bytes];
-        let response: Response = bincode::deserialize(response)?;
+        let response: Response = bincode::decode_from_slice(response, bincode::config::standard())
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?
+            .0;
         if !matches!(response, Response::Ok) {
             return Err("Request for new sockets failed".into());
         }
@@ -194,10 +203,14 @@ pub async fn process_socket_requests(socket: &UnixDatagram) -> error::Result<()>
 
         let len = socket.recv(&mut buf[..]).await?;
 
-        let request: Request = bincode::deserialize(&buf[..len])?;
+        let request: Request = bincode::decode_from_slice(&buf[..len], bincode::config::standard())
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?
+            .0;
 
         let response = Response::Ok;
-        let buf = bincode::serialize(&response)?;
+        let mut buf = [0u8; 1000];
+        let size = bincode::encode_into_slice(response, &mut buf, bincode::config::standard())
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
 
         let mut owned_fd_buf: Vec<OwnedFd> = Vec::with_capacity(request.number as usize);
         for _ in 0..request.number {
@@ -223,7 +236,7 @@ pub async fn process_socket_requests(socket: &UnixDatagram) -> error::Result<()>
 
         let raw_fd_buf: Vec<RawFd> = owned_fd_buf.iter().map(|fd| fd.as_raw_fd()).collect();
         let cmsg = ControlMessage::ScmRights(&raw_fd_buf[..]);
-        let iov = [IoSlice::new(&buf[..])];
+        let iov = [IoSlice::new(&buf[..size])];
 
         sendmsg::<()>(socket.as_raw_fd(), &iov, &[cmsg], MsgFlags::empty(), None)?;
     }

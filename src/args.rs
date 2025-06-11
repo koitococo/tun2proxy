@@ -8,8 +8,19 @@ use std::ffi::OsString;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::str::FromStr;
 
+#[macro_export]
+macro_rules! version_info {
+    () => {
+        concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), " ", env!("BUILD_TIME"), ")")
+    };
+}
+
+fn about_info() -> &'static str {
+    concat!("Tunnel interface to proxy.\nVersion: ", version_info!())
+}
+
 #[derive(Debug, Clone, clap::Parser)]
-#[command(author, version, about = "Tunnel interface to proxy.", long_about = None)]
+#[command(author, version = version_info!(), about = about_info(), long_about = None)]
 pub struct Args {
     /// Proxy URL in the form proto://[username[:password]@]host:port,
     /// where proto is one of socks4, socks5, http.
@@ -30,10 +41,9 @@ pub struct Args {
     pub tun_fd: Option<i32>,
 
     /// Set whether to close the received raw file descriptor on drop or not.
-    /// This setting is passed to the tun2 crate.
-    /// See [tun2::Configuration::close_fd_on_drop].
+    /// This setting is dependent on [tun_fd].
     #[cfg(unix)]
-    #[arg(long, value_name = "true or false", conflicts_with = "tun")]
+    #[arg(long, value_name = "true or false", conflicts_with = "tun", requires = "tun_fd")]
     pub close_fd_on_drop: Option<bool>,
 
     /// Create a tun interface in a newly created unprivileged namespace
@@ -66,8 +76,9 @@ pub struct Args {
     pub ipv6_enabled: bool,
 
     /// Routing and system setup, which decides whether to setup the routing and system configuration.
-    /// This option is only available on Linux and requires root-like privileges. See `capabilities(7)`.
-    #[arg(short, long, default_value = if cfg!(target_os = "linux") { "false" } else { "true" })]
+    /// This option requires root-like privileges on every platform.
+    /// It is very important on Linux, see `capabilities(7)`.
+    #[arg(short, long)]
     pub setup: bool,
 
     /// DNS handling strategy
@@ -103,6 +114,29 @@ pub struct Args {
     /// Daemonize for unix family or run as Windows service
     #[arg(long)]
     pub daemonize: bool,
+
+    /// Exit immediately when fatal error occurs, useful for running as a service
+    #[arg(long)]
+    pub exit_on_fatal_error: bool,
+
+    /// Maximum number of sessions to be handled concurrently
+    #[arg(long, value_name = "number", default_value = "200")]
+    pub max_sessions: usize,
+
+    /// UDP gateway server address, forwards UDP packets via specified TCP server
+    #[cfg(feature = "udpgw")]
+    #[arg(long, value_name = "IP:PORT")]
+    pub udpgw_server: Option<SocketAddr>,
+
+    /// Max connections for the UDP gateway, default value is 5
+    #[cfg(feature = "udpgw")]
+    #[arg(long, value_name = "number", requires = "udpgw_server")]
+    pub udpgw_connections: Option<usize>,
+
+    /// Keepalive interval in seconds for the UDP gateway, default value is 30
+    #[cfg(feature = "udpgw")]
+    #[arg(long, value_name = "seconds", requires = "udpgw_server")]
+    pub udpgw_keepalive: Option<u64>,
 }
 
 fn validate_tun(p: &str) -> Result<String> {
@@ -144,6 +178,14 @@ impl Default for Args {
             verbosity: ArgVerbosity::Info,
             virtual_dns_pool: IpCidr::from_str("198.18.0.0/15").unwrap(),
             daemonize: false,
+            exit_on_fatal_error: false,
+            max_sessions: 200,
+            #[cfg(feature = "udpgw")]
+            udpgw_server: None,
+            #[cfg(feature = "udpgw")]
+            udpgw_connections: None,
+            #[cfg(feature = "udpgw")]
+            udpgw_keepalive: None,
         }
     }
 }
@@ -151,8 +193,7 @@ impl Default for Args {
 impl Args {
     #[allow(clippy::let_and_return)]
     pub fn parse_args() -> Self {
-        use clap::Parser;
-        let args = Self::parse();
+        let args = <Self as ::clap::Parser>::parse();
         #[cfg(target_os = "linux")]
         if !args.setup && args.tun.is_none() {
             eprintln!("Missing required argument, '--tun' must present when '--setup' is not used.");
@@ -168,6 +209,18 @@ impl Args {
 
     pub fn dns(&mut self, dns: ArgDns) -> &mut Self {
         self.dns = dns;
+        self
+    }
+
+    #[cfg(feature = "udpgw")]
+    pub fn udpgw_server(&mut self, udpgw: SocketAddr) -> &mut Self {
+        self.udpgw_server = Some(udpgw);
+        self
+    }
+
+    #[cfg(feature = "udpgw")]
+    pub fn udpgw_connections(&mut self, udpgw_connections: usize) -> &mut Self {
+        self.udpgw_connections = Some(udpgw_connections);
         self
     }
 
@@ -353,17 +406,11 @@ impl TryFrom<&str> for ArgProxy {
         let e = format!("`{s}` does not contain a host");
         let host = url.host_str().ok_or(Error::from(e))?;
 
-        let mut url_host = String::from(host);
         let e = format!("`{s}` does not contain a port");
-        let port = url.port().ok_or(Error::from(&e))?;
-        url_host.push(':');
-        url_host.push_str(port.to_string().as_str());
+        let port = url.port_or_known_default().ok_or(Error::from(&e))?;
 
-        let e = format!("`{host}` could not be resolved");
-        let mut addr_iter = url_host.to_socket_addrs().map_err(|_| Error::from(&e))?;
-
-        let e = format!("`{host}` does not resolve to a usable IP address");
-        let addr = addr_iter.next().ok_or(Error::from(&e))?;
+        let e2 = format!("`{host}` does not resolve to a usable IP address");
+        let addr = (host, port).to_socket_addrs()?.next().ok_or(Error::from(&e2))?;
 
         let credentials = if url.username() == "" && url.password().is_none() {
             None

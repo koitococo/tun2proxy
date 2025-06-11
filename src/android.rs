@@ -1,14 +1,14 @@
 #![cfg(target_os = "android")]
 
 use crate::{
+    Args,
     args::ArgProxy,
     error::{Error, Result},
-    Args,
 };
 use jni::{
+    JNIEnv,
     objects::{JClass, JString},
     sys::{jboolean, jchar, jint},
-    JNIEnv,
 };
 
 /// # Safety
@@ -21,7 +21,7 @@ use jni::{
 /// - tun_mtu: the tun mtu
 /// - dns_strategy: the dns strategy, see ArgDns enum
 /// - verbosity: the verbosity level, see ArgVerbosity enum
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn Java_com_github_shadowsocks_bg_Tun2proxy_run(
     mut env: JNIEnv,
     _clazz: JClass,
@@ -52,15 +52,15 @@ pub unsafe extern "C" fn Java_com_github_shadowsocks_bg_Tun2proxy_run(
         .close_fd_on_drop(close_fd_on_drop)
         .dns(dns)
         .verbosity(verbosity);
-    crate::mobile_api::mobile_run(args, tun_mtu, false)
+    crate::general_api::general_run_for_api(args, tun_mtu, false)
 }
 
 /// # Safety
 ///
 /// Shutdown tun2proxy
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn Java_com_github_shadowsocks_bg_Tun2proxy_stop(_env: JNIEnv, _: JClass) -> jint {
-    crate::mobile_api::mobile_stop()
+    crate::general_api::tun2proxy_stop_internal()
 }
 
 fn get_java_string(env: &mut JNIEnv, string: &JString) -> Result<String, Error> {
